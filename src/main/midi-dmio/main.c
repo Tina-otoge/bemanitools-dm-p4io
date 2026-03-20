@@ -29,10 +29,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include <mmsystem.h>
 #include <windows.h>
+#include <mmsystem.h>
 
 #include "bemanitools/dmio.h"
 #include "util/log.h"
@@ -41,6 +42,9 @@
 /* MIDI channel 10 (0-indexed = 9) is the GM percussion channel */
 #define MIDI_CHANNEL 9
 #define MIDI_VELOCITY 100
+#define MIDI_VELOCITY_ACCENT 120
+#define MIDI_NOTE_LENGTH_MS 45
+#define MIDI_RETRIGGER_GUARD_MS 20
 
 /* GM drum note numbers */
 #define NOTE_LEFT_CYMBAL 49
@@ -73,9 +77,10 @@ static const struct pad_mapping mappings[] = {
 
 #define NUM_PADS (sizeof(mappings) / sizeof(mappings[0]))
 
-static void midi_note_on(HMIDIOUT out, uint8_t note)
+static void midi_note_on_velocity(HMIDIOUT out, uint8_t note, uint8_t velocity)
 {
-    DWORD msg = (MIDI_VELOCITY << 16) | (note << 8) | (0x90 | MIDI_CHANNEL);
+    DWORD msg = (((DWORD) velocity) << 16) | (((DWORD) note) << 8) |
+        (0x90 | MIDI_CHANNEL);
     midiOutShortMsg(out, msg);
 }
 
@@ -155,7 +160,16 @@ int main(int argc, char **argv)
     printf("\n");
 
     bool was_pressed[NUM_PADS];
+    bool note_active[NUM_PADS];
+    uint32_t note_off_at[NUM_PADS];
+    uint32_t can_retrigger_at[NUM_PADS];
+    uint32_t last_hit_at[NUM_PADS];
+
     memset(was_pressed, 0, sizeof(was_pressed));
+    memset(note_active, 0, sizeof(note_active));
+    memset(note_off_at, 0, sizeof(note_off_at));
+    memset(can_retrigger_at, 0, sizeof(can_retrigger_at));
+    memset(last_hit_at, 0, sizeof(last_hit_at));
 
     while (true) {
         if (!dm_io_read_inputs()) {
@@ -166,18 +180,42 @@ int main(int argc, char **argv)
 
         uint16_t pads = dm_io_get_pad_inputs();
         uint16_t sys = dm_io_get_sys_inputs();
+        uint32_t now_ms = GetTickCount();
 
         for (size_t i = 0; i < NUM_PADS; i++) {
             bool pressed = (pads >> mappings[i].bit) & 1;
+            bool hit =
+                pressed && !was_pressed[i] && now_ms >= can_retrigger_at[i];
 
-            if (pressed && !was_pressed[i]) {
-                midi_note_on(midi_out, mappings[i].note);
+            if (hit) {
+                uint8_t velocity = MIDI_VELOCITY;
+
+                if (last_hit_at[i] != 0 && (now_ms - last_hit_at[i]) <= 120) {
+                    velocity = MIDI_VELOCITY_ACCENT;
+                }
+
+                if (note_active[i]) {
+                    midi_note_off(midi_out, mappings[i].note);
+                    note_active[i] = false;
+                }
+
+                midi_note_on_velocity(midi_out, mappings[i].note, velocity);
+
+                note_active[i] = true;
+                note_off_at[i] = now_ms + MIDI_NOTE_LENGTH_MS;
+                can_retrigger_at[i] = now_ms + MIDI_RETRIGGER_GUARD_MS;
+                last_hit_at[i] = now_ms;
+
                 printf(
-                    "HIT: %-24s (note %u)\n",
+                    "HIT: %-24s (note %u vel %u)\n",
                     mappings[i].name,
-                    mappings[i].note);
-            } else if (!pressed && was_pressed[i]) {
+                    mappings[i].note,
+                    velocity);
+            }
+
+            if (note_active[i] && now_ms >= note_off_at[i]) {
                 midi_note_off(midi_out, mappings[i].note);
+                note_active[i] = false;
             }
 
             was_pressed[i] = pressed;
@@ -192,7 +230,7 @@ int main(int argc, char **argv)
     }
 
     for (size_t i = 0; i < NUM_PADS; i++) {
-        if (was_pressed[i]) {
+        if (note_active[i] || was_pressed[i]) {
             midi_note_off(midi_out, mappings[i].note);
         }
     }

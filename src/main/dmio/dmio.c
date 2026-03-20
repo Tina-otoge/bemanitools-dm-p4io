@@ -11,11 +11,48 @@
 #include <mmsystem.h>
 // clang-format on
 
+#include <string.h>
+
 #include "bemanitools/dmio.h"
 #include "bemanitools/input.h"
 
 static uint16_t dm_io_pad_state;
 static uint16_t dm_io_sys_state;
+static uint8_t dm_io_pad_debounce[16];
+static uint8_t dm_io_sys_debounce[16];
+
+static uint16_t dm_debounce_mask(
+    uint16_t stable,
+    uint16_t raw,
+    uint8_t counters[16],
+    uint8_t threshold,
+    uint8_t nbits)
+{
+    for (uint8_t i = 0; i < nbits; i++) {
+        uint16_t mask = (uint16_t) (1U << i);
+        bool stable_bit = (stable & mask) != 0;
+        bool raw_bit = (raw & mask) != 0;
+
+        if (stable_bit == raw_bit) {
+            counters[i] = 0;
+            continue;
+        }
+
+        if (++counters[i] < threshold) {
+            continue;
+        }
+
+        counters[i] = 0;
+
+        if (raw_bit) {
+            stable |= mask;
+        } else {
+            stable &= (uint16_t) ~mask;
+        }
+    }
+
+    return stable;
+}
 
 void dm_io_set_loggers(
     log_formatter_t misc,
@@ -34,6 +71,12 @@ bool dm_io_init(
     timeBeginPeriod(1);
     input_init(thread_create, thread_join, thread_destroy);
     mapper_config_load("dm");
+
+    dm_io_pad_state = 0;
+    dm_io_sys_state = 0;
+    memset(dm_io_pad_debounce, 0, sizeof(dm_io_pad_debounce));
+    memset(dm_io_sys_debounce, 0, sizeof(dm_io_sys_debounce));
+
     return true;
 }
 
@@ -48,11 +91,18 @@ bool dm_io_read_inputs(void)
     Sleep(1);
 
     uint32_t buttons = (uint32_t) mapper_update();
+    uint16_t raw_pad;
+    uint16_t raw_sys;
 
     /* bits 0-8: pad inputs (DM_IO_PAD_*), bits 16-26: sys inputs (DM_IO_SYS_*)
      */
-    dm_io_pad_state = buttons & 0x01FF;
-    dm_io_sys_state = (buttons >> 16) & 0x07FF;
+    raw_pad = buttons & 0x01FF;
+    raw_sys = (buttons >> 16) & 0x07FF;
+
+    dm_io_pad_state =
+        dm_debounce_mask(dm_io_pad_state, raw_pad, dm_io_pad_debounce, 2, 9);
+    dm_io_sys_state =
+        dm_debounce_mask(dm_io_sys_state, raw_sys, dm_io_sys_debounce, 2, 11);
 
     return true;
 }

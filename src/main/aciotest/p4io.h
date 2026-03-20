@@ -26,4 +26,12 @@ void aciotest_p4io_run_analog(void);
  */
 void aciotest_p4io_run_analog2(void);
 
+/**
+ * Run guided JAMMA mapping capture for dmio-p4io.
+ *
+ * Asks the operator to hold each DM control one by one and emits ready-to-paste
+ * #define JAMMA_BIT_* lines.
+ */
+void aciotest_p4io_run_map(bool save_to_file);
+
 #endif

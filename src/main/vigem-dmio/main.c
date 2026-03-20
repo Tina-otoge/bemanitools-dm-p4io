@@ -37,6 +37,9 @@
 #include "util/thread.h"
 #include "vigemstub/helper.h"
 
+#define DM_PAD_COUNT 9
+#define PAD_HIT_PULSE_FRAMES 2
+
 int main(int argc, char **argv)
 {
     log_to_writer(log_writer_stdout, NULL);
@@ -68,6 +71,22 @@ int main(int argc, char **argv)
     log_info("Hold Service + Test together to exit.");
 
     XUSB_REPORT report;
+    uint16_t prev_pads = 0;
+    uint8_t pad_pulse[DM_PAD_COUNT];
+
+    memset(pad_pulse, 0, sizeof(pad_pulse));
+
+    const enum dm_io_pad_bit pad_index[DM_PAD_COUNT] = {
+        DM_IO_PAD_LEFT_CYMBAL,
+        DM_IO_PAD_HIHAT,
+        DM_IO_PAD_LEFT_PEDAL,
+        DM_IO_PAD_SNARE,
+        DM_IO_PAD_HI_TOM,
+        DM_IO_PAD_BASS_PEDAL,
+        DM_IO_PAD_LOW_TOM,
+        DM_IO_PAD_FLOOR_TOM,
+        DM_IO_PAD_RIGHT_CYMBAL,
+    };
 
     while (true) {
         if (!dm_io_read_inputs()) {
@@ -79,25 +98,51 @@ int main(int argc, char **argv)
         uint16_t pads = dm_io_get_pad_inputs();
         uint16_t sys = dm_io_get_sys_inputs();
 
+        for (size_t i = 0; i < DM_PAD_COUNT; i++) {
+            uint16_t mask = (uint16_t) (1U << pad_index[i]);
+            bool pressed = (pads & mask) != 0;
+            bool was_pressed = (prev_pads & mask) != 0;
+
+            if (pressed && !was_pressed) {
+                pad_pulse[i] = PAD_HIT_PULSE_FRAMES;
+            } else if (pad_pulse[i] > 0) {
+                pad_pulse[i]--;
+            }
+        }
+
+        bool left_cymbal =
+            (pads & (1U << DM_IO_PAD_LEFT_CYMBAL)) || pad_pulse[0] > 0;
+        bool hihat = (pads & (1U << DM_IO_PAD_HIHAT)) || pad_pulse[1] > 0;
+        bool left_pedal =
+            (pads & (1U << DM_IO_PAD_LEFT_PEDAL)) || pad_pulse[2] > 0;
+        bool snare = (pads & (1U << DM_IO_PAD_SNARE)) || pad_pulse[3] > 0;
+        bool hi_tom = (pads & (1U << DM_IO_PAD_HI_TOM)) || pad_pulse[4] > 0;
+        bool bass = (pads & (1U << DM_IO_PAD_BASS_PEDAL)) || pad_pulse[5] > 0;
+        bool low_tom = (pads & (1U << DM_IO_PAD_LOW_TOM)) || pad_pulse[6] > 0;
+        bool floor_tom =
+            (pads & (1U << DM_IO_PAD_FLOOR_TOM)) || pad_pulse[7] > 0;
+        bool right_cymbal =
+            (pads & (1U << DM_IO_PAD_RIGHT_CYMBAL)) || pad_pulse[8] > 0;
+
         memset(&report, 0, sizeof(report));
 
-        if (pads & (1 << DM_IO_PAD_LEFT_CYMBAL))
+        if (left_cymbal)
             report.bLeftTrigger = 255;
-        if (pads & (1 << DM_IO_PAD_HIHAT))
+        if (hihat)
             report.wButtons |= XUSB_GAMEPAD_LEFT_SHOULDER;
-        if (pads & (1 << DM_IO_PAD_LEFT_PEDAL))
+        if (left_pedal)
             report.wButtons |= XUSB_GAMEPAD_LEFT_THUMB;
-        if (pads & (1 << DM_IO_PAD_SNARE))
+        if (snare)
             report.wButtons |= XUSB_GAMEPAD_A;
-        if (pads & (1 << DM_IO_PAD_HI_TOM))
+        if (hi_tom)
             report.wButtons |= XUSB_GAMEPAD_B;
-        if (pads & (1 << DM_IO_PAD_BASS_PEDAL))
+        if (bass)
             report.bRightTrigger = 255;
-        if (pads & (1 << DM_IO_PAD_LOW_TOM))
+        if (low_tom)
             report.wButtons |= XUSB_GAMEPAD_X;
-        if (pads & (1 << DM_IO_PAD_FLOOR_TOM))
+        if (floor_tom)
             report.wButtons |= XUSB_GAMEPAD_Y;
-        if (pads & (1 << DM_IO_PAD_RIGHT_CYMBAL))
+        if (right_cymbal)
             report.wButtons |= XUSB_GAMEPAD_RIGHT_SHOULDER;
 
         if (sys & (1 << DM_IO_SYS_START))
@@ -121,6 +166,8 @@ int main(int argc, char **argv)
             log_info("Service + Test pressed, exiting.");
             break;
         }
+
+        prev_pads = pads;
 
         Sleep(1);
     }

@@ -96,6 +96,7 @@ int main(int argc, char **argv)
             "       %s p4io\n"
             "       %s p4io analog\n"
             "       %s p4io analog2\n"
+            "       %s p4io map [save]\n"
             "Example:\n"
             "\"%s COM1 57600\" for generic acio device\n"
             "\"%s COM1 57600 bi2a-iidx\" for the iidx BI2A mode\n"
@@ -103,7 +104,12 @@ int main(int argc, char **argv)
             "\"%s p4io\" for P4IO JAMMA bit monitor\n"
             "\"%s p4io analog\" for P4IO SCI analog discovery monitor\n"
             "\"%s p4io analog2\" for extra SCI probe guesses "
-            "(spice-inspired)\n",
+            "(spice-inspired)\n"
+            "\"%s p4io map\" for guided JAMMA-to-dmio mapping capture\n"
+            "\"%s p4io map save\" also writes timestamped mapping file\n",
+            argv[0],
+            argv[0],
+            argv[0],
             argv[0],
             argv[0],
             argv[0],
@@ -124,6 +130,9 @@ int main(int argc, char **argv)
             aciotest_p4io_run_analog();
         } else if (argc >= 3 && !strcmp(argv[2], "analog2")) {
             aciotest_p4io_run_analog2();
+        } else if (argc >= 3 && !strcmp(argv[2], "map")) {
+            bool save_to_file = argc >= 4 && !strcmp(argv[3], "save");
+            aciotest_p4io_run_map(save_to_file);
         } else {
             aciotest_p4io_run_digital();
         }
