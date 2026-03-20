@@ -186,8 +186,10 @@ include src/main/p3ioemu/Module.mk
 include src/main/p3io-ddr-tool/Module.mk
 include src/main/p4iodrv/Module.mk
 include src/main/p4ioemu/Module.mk
-include src/main/p4io-xinput/Module.mk
-include src/main/p4io-midi/Module.mk
+include src/main/dmio/Module.mk
+include src/main/dmio-p4io/Module.mk
+include src/main/vigem-dmio/Module.mk
+include src/main/midi-dmio/Module.mk
 include src/main/popnhook-util/Module.mk
 include src/main/popnhook1/Module.mk
 include src/main/popnio/Module.mk
@@ -901,7 +903,9 @@ all: $(BUILDDIR)/bemanitools.zip $(BUILDDIR)/tests.zip
 
 dm-tools: \
 build/bin/indep-32/aciotest.exe \
-build/bin/indep-32/p4io-xinput.exe \
-build/bin/indep-32/p4io-midi.exe
+build/bin/indep-32/dmio.dll \
+build/bin/indep-32/dmio-p4io.dll \
+build/bin/indep-32/vigem-dmio.exe \
+build/bin/indep-32/midi-dmio.exe
 
 .PHONY: dm-tools

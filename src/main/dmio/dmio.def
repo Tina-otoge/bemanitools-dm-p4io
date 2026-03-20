@@ -1,0 +1,9 @@
+LIBRARY dmio
+
+EXPORTS
+    dm_io_set_loggers
+    dm_io_init
+    dm_io_fini
+    dm_io_read_inputs
+    dm_io_get_pad_inputs
+    dm_io_get_sys_inputs

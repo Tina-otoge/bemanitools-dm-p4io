@@ -25,9 +25,11 @@ static bool p4io_transfer(
     const void *req_payload,
     size_t req_payload_len,
     void *resp_payload,
-    size_t resp_payload_len)
+    size_t resp_payload_max_len,
+    size_t *resp_payload_len,
+    bool strict_resp_len)
 {
-    size_t transferred_response_payload = resp_payload_len;
+    size_t transferred_response_payload = resp_payload_max_len;
     bool ret = p4io_usb_transfer(
         ctx->bulk_handle,
         cmd,
@@ -43,12 +45,17 @@ static bool p4io_transfer(
         return false;
     }
 
-    if (resp_payload_len && transferred_response_payload != resp_payload_len) {
+    if (strict_resp_len && resp_payload_max_len &&
+        transferred_response_payload != resp_payload_max_len) {
         log_warning(
             "Asked for %u bytes got %u",
-            (unsigned) resp_payload_len,
+            (unsigned) resp_payload_max_len,
             (unsigned) transferred_response_payload);
         return false;
+    }
+
+    if (resp_payload_len) {
+        *resp_payload_len = transferred_response_payload;
     }
 
     return true;
@@ -96,7 +103,7 @@ bool p4iodrv_read_jamma(struct p4iodrv_ctx *ctx, uint32_t jamma[4])
 // send something you don't expect a response for
 static bool p4io_send(struct p4iodrv_ctx *ctx, uint8_t cmd)
 {
-    return p4io_transfer(ctx, cmd, NULL, 0, NULL, 0);
+    return p4io_transfer(ctx, cmd, NULL, 0, NULL, 0, NULL, false);
 }
 
 // Real IO does not check the return value, so neither do we.
@@ -142,15 +149,93 @@ bool p4iodrv_cmd_device_info(
     struct p4iodrv_ctx *ctx, struct p4io_resp_device_info *info)
 {
     return p4io_transfer(
-        ctx, P4IO_CMD_GET_DEVICE_INFO, NULL, 0, info, sizeof(*info));
+        ctx,
+        P4IO_CMD_GET_DEVICE_INFO,
+        NULL,
+        0,
+        info,
+        sizeof(*info),
+        NULL,
+        true);
 }
 
 bool p4iodrv_cmd_portout(struct p4iodrv_ctx *ctx, const uint8_t buffer[16])
 {
-    return p4io_transfer(ctx, P4IO_CMD_SET_PORTOUT, buffer, 16, NULL, 0);
+    return p4io_transfer(
+        ctx, P4IO_CMD_SET_PORTOUT, buffer, 16, NULL, 0, NULL, false);
 }
 
 bool p4iodrv_cmd_coinstock(struct p4iodrv_ctx *ctx, const uint8_t buffer[4])
 {
-    return p4io_transfer(ctx, P4IO_CMD_COINSTOCK, buffer, 4, NULL, 0);
+    return p4io_transfer(
+        ctx, P4IO_CMD_COINSTOCK, buffer, 4, NULL, 0, NULL, false);
+}
+
+bool p4iodrv_cmd_raw(
+    struct p4iodrv_ctx *ctx,
+    uint8_t cmd,
+    const void *req_payload,
+    size_t req_payload_len,
+    void *resp_payload,
+    size_t resp_payload_max_len,
+    size_t *resp_payload_len)
+{
+    size_t transferred_len = 0;
+
+    if (req_payload_len > P4IO_MAX_PAYLOAD ||
+        resp_payload_max_len > P4IO_MAX_PAYLOAD) {
+        log_warning(
+            "Invalid raw p4io cmd payload lengths req=%u resp=%u",
+            (unsigned) req_payload_len,
+            (unsigned) resp_payload_max_len);
+        return false;
+    }
+
+    if (!p4io_transfer(
+            ctx,
+            cmd,
+            req_payload,
+            req_payload_len,
+            resp_payload,
+            resp_payload_max_len,
+            &transferred_len,
+            false)) {
+        return false;
+    }
+
+    if (resp_payload_len) {
+        *resp_payload_len = transferred_len;
+    }
+
+    return true;
+}
+
+bool p4iodrv_cmd_sci_open(struct p4iodrv_ctx *ctx)
+{
+    return p4io_transfer(
+        ctx, P4IO_CMD_SCI_MNG_OPEN, NULL, 0, NULL, 0, NULL, false);
+}
+
+bool p4iodrv_cmd_sci_update(
+    struct p4iodrv_ctx *ctx,
+    const void *req_payload,
+    size_t req_payload_len,
+    void *resp_payload,
+    size_t resp_payload_max_len,
+    size_t *resp_payload_len)
+{
+    return p4iodrv_cmd_raw(
+        ctx,
+        P4IO_CMD_SCI_UPDATE,
+        req_payload,
+        req_payload_len,
+        resp_payload,
+        resp_payload_max_len,
+        resp_payload_len);
+}
+
+bool p4iodrv_cmd_sci_close(struct p4iodrv_ctx *ctx)
+{
+    return p4io_transfer(
+        ctx, P4IO_CMD_SCI_MNG_BREAK, NULL, 0, NULL, 0, NULL, false);
 }
