@@ -16,54 +16,32 @@
 #include <setupapi.h>
 // clang-format on
 
+#include <stdatomic.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bemanitools/dmio.h"
+
+#include "cconfig/cconfig-main.h"
+
+#include "dmio-p4io/config.h"
+
 #include "p4iodrv/device.h"
 #include "util/log.h"
 
-/* ---------------------------------------------------------------------------
- * Jamma bit positions for drum pad inputs (active LOW in jamma[0]).
- * TODO: Run aciotest and hit each pad to confirm the correct bit numbers.
- * ---------------------------------------------------------------------------
- */
-
-#define JAMMA_BIT_LEFT_CYMBAL 0 /* TODO */
-#define JAMMA_BIT_HIHAT 1 /* TODO */
-#define JAMMA_BIT_LEFT_PEDAL 8 /* TODO */
-#define JAMMA_BIT_SNARE 2 /* TODO */
-#define JAMMA_BIT_HI_TOM 3 /* TODO */
-#define JAMMA_BIT_BASS_PEDAL 7 /* TODO */
-#define JAMMA_BIT_LOW_TOM 4 /* TODO */
-#define JAMMA_BIT_FLOOR_TOM 5 /* TODO */
-#define JAMMA_BIT_RIGHT_CYMBAL 6 /* TODO */
-
-/* ---------------------------------------------------------------------------
- * Jamma bit positions for system buttons (active HIGH in jamma[0]).
- * These match the standard P4IO assignment shared with Jubeat cabinets.
- * TODO: Verify on real hardware.
- * ---------------------------------------------------------------------------
- */
-
-#define JAMMA_BIT_SERVICE 25
-#define JAMMA_BIT_TEST 24
-#define JAMMA_BIT_COIN 28
-#define JAMMA_BIT_START 16 /* TODO */
-#define JAMMA_BIT_UP 17 /* TODO */
-#define JAMMA_BIT_DOWN 18 /* TODO */
-#define JAMMA_BIT_LEFT 19 /* TODO */
-#define JAMMA_BIT_RIGHT 20 /* TODO */
-#define JAMMA_BIT_HELP 21 /* TODO */
-#define JAMMA_BIT_EXTRA1 22 /* TODO */
-#define JAMMA_BIT_EXTRA2 23 /* TODO */
-
 static struct p4iodrv_ctx *p4io_ctx;
+static atomic_bool running;
+static atomic_bool processing_io;
 static uint16_t dm_pad_state;
 static uint16_t dm_sys_state;
 static uint8_t dm_pad_debounce[16];
 static uint8_t dm_sys_debounce[16];
 static uint8_t dm_read_fail_streak;
+static uint8_t dm_pad_debounce_threshold;
+static uint8_t dm_sys_debounce_threshold;
+static uint8_t dm_max_read_fail_streak;
+static bool dm_log_jamma;
 
 struct dm_bit_map {
     uint8_t out_bit;
@@ -71,31 +49,44 @@ struct dm_bit_map {
     bool active_high;
 };
 
-static const struct dm_bit_map dm_pad_maps[] = {
-    {DM_IO_PAD_LEFT_CYMBAL, JAMMA_BIT_LEFT_CYMBAL, false},
-    {DM_IO_PAD_HIHAT, JAMMA_BIT_HIHAT, false},
-    {DM_IO_PAD_LEFT_PEDAL, JAMMA_BIT_LEFT_PEDAL, false},
-    {DM_IO_PAD_SNARE, JAMMA_BIT_SNARE, false},
-    {DM_IO_PAD_HI_TOM, JAMMA_BIT_HI_TOM, false},
-    {DM_IO_PAD_BASS_PEDAL, JAMMA_BIT_BASS_PEDAL, false},
-    {DM_IO_PAD_LOW_TOM, JAMMA_BIT_LOW_TOM, false},
-    {DM_IO_PAD_FLOOR_TOM, JAMMA_BIT_FLOOR_TOM, false},
-    {DM_IO_PAD_RIGHT_CYMBAL, JAMMA_BIT_RIGHT_CYMBAL, false},
+static struct dm_bit_map dm_pad_maps[] = {
+    {DM_IO_PAD_LEFT_CYMBAL, 0, false},
+    {DM_IO_PAD_HIHAT, 0, false},
+    {DM_IO_PAD_LEFT_PEDAL, 0, false},
+    {DM_IO_PAD_SNARE, 0, false},
+    {DM_IO_PAD_HI_TOM, 0, false},
+    {DM_IO_PAD_BASS_PEDAL, 0, false},
+    {DM_IO_PAD_LOW_TOM, 0, false},
+    {DM_IO_PAD_FLOOR_TOM, 0, false},
+    {DM_IO_PAD_RIGHT_CYMBAL, 0, false},
 };
 
-static const struct dm_bit_map dm_sys_maps[] = {
-    {DM_IO_SYS_SERVICE, JAMMA_BIT_SERVICE, true},
-    {DM_IO_SYS_TEST, JAMMA_BIT_TEST, true},
-    {DM_IO_SYS_COIN, JAMMA_BIT_COIN, true},
-    {DM_IO_SYS_START, JAMMA_BIT_START, true},
-    {DM_IO_SYS_UP, JAMMA_BIT_UP, true},
-    {DM_IO_SYS_DOWN, JAMMA_BIT_DOWN, true},
-    {DM_IO_SYS_LEFT, JAMMA_BIT_LEFT, true},
-    {DM_IO_SYS_RIGHT, JAMMA_BIT_RIGHT, true},
-    {DM_IO_SYS_HELP, JAMMA_BIT_HELP, true},
-    {DM_IO_SYS_EXTRA1, JAMMA_BIT_EXTRA1, true},
-    {DM_IO_SYS_EXTRA2, JAMMA_BIT_EXTRA2, true},
+static struct dm_bit_map dm_sys_maps[] = {
+    {DM_IO_SYS_SERVICE, 0, true},
+    {DM_IO_SYS_TEST, 0, true},
+    {DM_IO_SYS_COIN, 0, true},
+    {DM_IO_SYS_START, 0, true},
+    {DM_IO_SYS_UP, 0, true},
+    {DM_IO_SYS_DOWN, 0, true},
+    {DM_IO_SYS_LEFT, 0, true},
+    {DM_IO_SYS_RIGHT, 0, true},
+    {DM_IO_SYS_HELP, 0, true},
+    {DM_IO_SYS_EXTRA1, 0, true},
+    {DM_IO_SYS_EXTRA2, 0, true},
 };
+
+static void dm_apply_config_maps(const struct dmio_p4io_config *config)
+{
+    for (size_t i = 0; i < DMIO_P4IO_PAD_COUNT; i++) {
+        dm_pad_maps[i].jamma_bit = (uint8_t) config->pad_bits[i];
+        dm_pad_maps[i].active_high = config->pad_active_high;
+    }
+
+    for (size_t i = 0; i < DMIO_P4IO_SYS_COUNT; i++) {
+        dm_sys_maps[i].jamma_bit = (uint8_t) config->sys_bits[i];
+        dm_sys_maps[i].active_high = config->sys_active_high;
+    }
+}
 
 void dm_io_set_loggers(
     log_formatter_t misc,
@@ -111,6 +102,37 @@ bool dm_io_init(
     thread_join_t thread_join,
     thread_destroy_t thread_destroy)
 {
+    struct cconfig *config;
+    struct dmio_p4io_config config_dmio_p4io;
+
+    config = cconfig_init();
+
+    dmio_p4io_config_init(config);
+
+    if (!cconfig_main_config_init(
+            config,
+            "--dmio-p4io-config",
+            "dmio-p4io.conf",
+            "--help",
+            "-h",
+            "dmio-p4io",
+            CCONFIG_CMD_USAGE_OUT_STDOUT)) {
+        cconfig_finit(config);
+        exit(EXIT_FAILURE);
+    }
+
+    dmio_p4io_config_get(&config_dmio_p4io, config);
+
+    cconfig_finit(config);
+
+    dm_apply_config_maps(&config_dmio_p4io);
+    dm_pad_debounce_threshold =
+        (uint8_t) config_dmio_p4io.pad_debounce_threshold;
+    dm_sys_debounce_threshold =
+        (uint8_t) config_dmio_p4io.sys_debounce_threshold;
+    dm_max_read_fail_streak = (uint8_t) config_dmio_p4io.max_read_fail_streak;
+    dm_log_jamma = config_dmio_p4io.log_jamma;
+
     p4io_ctx = p4iodrv_open();
 
     if (!p4io_ctx) {
@@ -121,6 +143,8 @@ bool dm_io_init(
     dm_pad_state = 0;
     dm_sys_state = 0;
     dm_read_fail_streak = 0;
+    running = true;
+    processing_io = false;
 
     memset(dm_pad_debounce, 0, sizeof(dm_pad_debounce));
     memset(dm_sys_debounce, 0, sizeof(dm_sys_debounce));
@@ -130,6 +154,12 @@ bool dm_io_init(
 
 void dm_io_fini(void)
 {
+    running = false;
+
+    while (processing_io) {
+        Sleep(1);
+    }
+
     if (p4io_ctx) {
         p4iodrv_close(p4io_ctx);
         p4io_ctx = NULL;
@@ -200,6 +230,12 @@ bool dm_io_read_inputs(void)
 {
     uint32_t jamma[4];
 
+    if (!running) {
+        return false;
+    }
+
+    processing_io = true;
+
     if (!p4iodrv_read_jamma(p4io_ctx, jamma)) {
         if (dm_read_fail_streak < 255) {
             dm_read_fail_streak++;
@@ -207,21 +243,37 @@ bool dm_io_read_inputs(void)
 
         /* libdevice keeps cached state; do the same across short read hiccups
          */
-        return dm_read_fail_streak <= 5;
+        processing_io = false;
+        return dm_read_fail_streak <= dm_max_read_fail_streak;
     }
 
     dm_read_fail_streak = 0;
 
     uint32_t j0 = jamma[0];
+
+    if (dm_log_jamma) {
+        log_info("jamma[0]=0x%08X", j0);
+    }
+
     uint16_t raw_pad = dm_map_raw(
         j0, dm_pad_maps, sizeof(dm_pad_maps) / sizeof(dm_pad_maps[0]));
     uint16_t raw_sys = dm_map_raw(
         j0, dm_sys_maps, sizeof(dm_sys_maps) / sizeof(dm_sys_maps[0]));
 
-    dm_pad_state =
-        dm_debounce_mask(dm_pad_state, raw_pad, dm_pad_debounce, 2, 9);
-    dm_sys_state =
-        dm_debounce_mask(dm_sys_state, raw_sys, dm_sys_debounce, 2, 11);
+    dm_pad_state = dm_debounce_mask(
+        dm_pad_state,
+        raw_pad,
+        dm_pad_debounce,
+        dm_pad_debounce_threshold,
+        DMIO_P4IO_PAD_COUNT);
+    dm_sys_state = dm_debounce_mask(
+        dm_sys_state,
+        raw_sys,
+        dm_sys_debounce,
+        dm_sys_debounce_threshold,
+        DMIO_P4IO_SYS_COUNT);
+
+    processing_io = false;
 
     return true;
 }

@@ -247,3 +247,90 @@ Quick offsets used for the findings above.
 - Mappings in `dmio-p4io/dmio.c` are still marked TODO where cabinet-specific
   confirmation is needed.
 - Use `aciotest p4io analog2` on real hardware to lock final bit assignments.
+
+## Runtime Config (No Recompile Mapping Iteration)
+
+`dmio-p4io` now loads a runtime config file via:
+
+- `--dmio-p4io-config <path>`
+- default: `dmio-p4io.conf`
+
+This is intended for real-hardware bring-up so you can change JAMMA bit
+assignments and filtering without recompiling.
+
+### Key options
+
+Pad bit mappings (`0..31`):
+
+- `dmio.p4io.pad.left_cymbal_bit`
+- `dmio.p4io.pad.hihat_bit`
+- `dmio.p4io.pad.left_pedal_bit`
+- `dmio.p4io.pad.snare_bit`
+- `dmio.p4io.pad.hi_tom_bit`
+- `dmio.p4io.pad.bass_pedal_bit`
+- `dmio.p4io.pad.low_tom_bit`
+- `dmio.p4io.pad.floor_tom_bit`
+- `dmio.p4io.pad.right_cymbal_bit`
+
+System bit mappings (`0..31`):
+
+- `dmio.p4io.sys.service_bit`
+- `dmio.p4io.sys.test_bit`
+- `dmio.p4io.sys.coin_bit`
+- `dmio.p4io.sys.start_bit`
+- `dmio.p4io.sys.up_bit`
+- `dmio.p4io.sys.down_bit`
+- `dmio.p4io.sys.left_bit`
+- `dmio.p4io.sys.right_bit`
+- `dmio.p4io.sys.help_bit`
+- `dmio.p4io.sys.extra1_bit`
+- `dmio.p4io.sys.extra2_bit`
+
+Filtering/reliability:
+
+- `dmio.p4io.pad.debounce_threshold` (`1..10`, default `2`)
+- `dmio.p4io.sys.debounce_threshold` (`1..10`, default `2`)
+- `dmio.p4io.max_read_fail_streak` (`0..255`, default `5`)
+
+Polarity/debug:
+
+- `dmio.p4io.pad.active_high` (default `false`)
+- `dmio.p4io.sys.active_high` (default `true`)
+- `dmio.p4io.log_jamma` (default `false`)
+
+### Example `dmio-p4io.conf`
+
+```
+# Keep defaults for known-good system bits
+dmio.p4io.sys.service_bit=25
+dmio.p4io.sys.test_bit=24
+dmio.p4io.sys.coin_bit=28
+
+# Cabinet-specific drum map discovered with aciotest
+dmio.p4io.pad.left_cymbal_bit=0
+dmio.p4io.pad.hihat_bit=1
+dmio.p4io.pad.left_pedal_bit=8
+dmio.p4io.pad.snare_bit=2
+dmio.p4io.pad.hi_tom_bit=3
+dmio.p4io.pad.bass_pedal_bit=7
+dmio.p4io.pad.low_tom_bit=4
+dmio.p4io.pad.floor_tom_bit=5
+dmio.p4io.pad.right_cymbal_bit=6
+
+# Tune stability
+dmio.p4io.pad.debounce_threshold=2
+dmio.p4io.sys.debounce_threshold=2
+dmio.p4io.max_read_fail_streak=5
+
+# Optional debugging
+dmio.p4io.log_jamma=false
+```
+
+### Suggested real-hardware loop
+
+1. Run `aciotest p4io analog2` and note active bit transitions.
+2. Edit `dmio-p4io.conf` only.
+3. Restart your target process and re-test.
+4. Repeat until all pads/buttons map correctly.
+
+No source patch and no rebuild is required for bit-map tuning.
